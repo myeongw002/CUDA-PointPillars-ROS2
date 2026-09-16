@@ -45,7 +45,23 @@ The values in `include/params.h` (point-cloud range, voxel size, anchors, class 
 
 ## Docker environment
 
-The provided Docker image uses NVIDIA TensorRT `23.08-py3` as its base and installs ROS 2 Humble inside the container. The base image provides Ubuntu 22.04, CUDA 12.2.x, and TensorRT 8.6.x.
+The Docker image contains only the runtime/build dependencies: Ubuntu 22.04, CUDA/TensorRT from `nvcr.io/nvidia/tensorrt:23.08-py3`, and ROS 2 Humble.
+
+The repository source is **not copied into the image**. At runtime the host checkout is bind-mounted into:
+
+```text
+/workspace/ros2_ws/src/CUDA-PointPillars-ROS2
+```
+
+Colcon outputs are kept in Docker named volumes instead of the host workspace:
+
+```text
+pointpillars_ros2_build   -> /workspace/ros2_ws/build
+pointpillars_ros2_install -> /workspace/ros2_ws/install
+pointpillars_ros2_log     -> /workspace/ros2_ws/log
+```
+
+This lets the same source tree be edited on the host without sharing host/container `build`, `install`, or `log` directories.
 
 ### Host requirements
 
@@ -60,7 +76,7 @@ Verify GPU access first:
 docker run --rm --gpus all nvcr.io/nvidia/tensorrt:23.08-py3 nvidia-smi
 ```
 
-### Build
+### Build the dependency image
 
 For an RTX 30-series GPU (SM 8.6):
 
@@ -68,46 +84,45 @@ For an RTX 30-series GPU (SM 8.6):
 ./docker/build.sh
 ```
 
-Equivalent command:
-
-```bash
-docker build \
-  --build-arg CUDA_ARCH=86 \
-  -t cuda-pointpillars-ros2:humble-trt8.6 \
-  .
-```
-
-To build for another GPU, override `CUDA_ARCH`.
+This step builds only the Docker dependency image. The ROS package itself is compiled from the bind-mounted source when `docker/run.sh` starts.
 
 ### Run
-
-The container uses host networking so ROS 2 DDS traffic can be shared with ROS 2 nodes running directly on the host.
 
 ```bash
 INPUT_TOPIC=/point_cloud ./docker/run.sh
 ```
 
-Example with another PointCloud2 topic:
+For the interpolated cloud:
 
 ```bash
-INPUT_TOPIC=/my_point_cloud ./docker/run.sh
+INPUT_TOPIC=/pc_interpoled ./docker/run.sh
 ```
 
-The output remains:
+For raw VLP-16:
+
+```bash
+INPUT_TOPIC=/velodyne_points ./docker/run.sh
+```
+
+`docker/run.sh` performs:
+
+```text
+host repository
+   ↓ bind mount
+/workspace/ros2_ws/src/CUDA-PointPillars-ROS2
+   ↓
+colcon build
+   ↓
+named build/install/log volumes
+   ↓
+ros2 launch
+```
+
+The output is:
 
 ```text
 /pointpillars/detections
 ```
-
-To use a different ONNX model without rebuilding the image:
-
-```bash
-MODEL_PATH=/absolute/path/to/pointpillar.onnx \
-INPUT_TOPIC=/point_cloud \
-./docker/run.sh
-```
-
-The model directory is mounted writable because TensorRT stores its serialized engine cache next to the ONNX file as `<model>.cache`. Delete that cache after changing the ONNX model, TensorRT version, or GPU architecture.
 
 If the host uses a non-zero ROS domain ID:
 
@@ -115,9 +130,48 @@ If the host uses a non-zero ROS domain ID:
 ROS_DOMAIN_ID=10 ./docker/run.sh
 ```
 
+To use another ONNX model:
+
+```bash
+MODEL_PATH=/absolute/path/to/pointpillar.onnx \
+INPUT_TOPIC=/pc_interpoled \
+./docker/run.sh
+```
+
+The custom model directory is mounted read-write because TensorRT stores its serialized engine cache next to the model as `<model>.cache`.
+
+### Interactive development shell
+
+To enter the same container environment with the source and named volumes mounted:
+
+```bash
+bash docker/shell.sh
+```
+
+Then, for example:
+
+```bash
+cd /workspace/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install \
+  --packages-select cuda_pointpillars_ros \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86
+source install/setup.bash
+```
+
+### Reset container build outputs
+
+If CUDA/TensorRT/CMake settings change and a completely clean rebuild is needed:
+
+```bash
+bash docker/clean-volumes.sh
+```
+
+This deletes only the Docker build/install/log named volumes. It does not touch the host source tree.
+
 ## Native ROS 2 build
 
-A native build is also possible when CUDA and TensorRT are already installed on the host.
+A native build is also possible when CUDA and TensorRT are already installed on the host. Do not reuse the Docker named-volume artifacts for a native build.
 
 ```bash
 mkdir -p ~/ros2_ws/src
@@ -180,7 +234,7 @@ Compared with the original ROS 2 wrapper, this fork currently:
 - uses class-aware NMS by default;
 - guards zero-overlap cases in the rotated-box intersection code;
 - provides an RTX 30-series CUDA architecture default (`SM 86`) that can be overridden at build time;
-- provides a Docker environment that isolates ROS 2 / CUDA / TensorRT dependencies from the host system.
+- provides a bind-mounted Docker development workflow that isolates ROS 2 / CUDA / TensorRT dependencies and colcon build artifacts from the host workspace.
 
 ## Camera-LiDAR fusion roadmap
 
