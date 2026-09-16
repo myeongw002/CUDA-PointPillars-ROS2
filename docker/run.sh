@@ -2,8 +2,6 @@
 set -euo pipefail
 
 IMAGE="${IMAGE:-cuda-pointpillars-ros2:humble-trt8.6}"
-INPUT_TOPIC="${INPUT_TOPIC:-/point_cloud}"
-OUTPUT_TOPIC="${OUTPUT_TOPIC:-/pointpillars/detections}"
 ROS_DOMAIN_ID_VALUE="${ROS_DOMAIN_ID:-0}"
 CUDA_ARCH_VALUE="${CUDA_ARCH:-86}"
 
@@ -16,8 +14,23 @@ BUILD_VOLUME="${BUILD_VOLUME:-pointpillars_ros2_build}"
 INSTALL_VOLUME="${INSTALL_VOLUME:-pointpillars_ros2_install}"
 LOG_VOLUME="${LOG_VOLUME:-pointpillars_ros2_log}"
 
+RUNTIME_ENV=(
+  -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID_VALUE}"
+  -e CUDA_ARCH="${CUDA_ARCH_VALUE}"
+  -e NVIDIA_VISIBLE_DEVICES=all
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,utility
+)
+
+# Topic environment variables are optional. If omitted, the values in
+# config/pointpillars.yaml are used unchanged.
+if [[ -n "${INPUT_TOPIC:-}" ]]; then
+  RUNTIME_ENV+=(-e "INPUT_TOPIC=${INPUT_TOPIC}")
+fi
+if [[ -n "${OUTPUT_TOPIC:-}" ]]; then
+  RUNTIME_ENV+=(-e "OUTPUT_TOPIC=${OUTPUT_TOPIC}")
+fi
+
 MODEL_MOUNT=()
-MODEL_ENV=()
 if [[ -n "${MODEL_PATH:-}" ]]; then
   MODEL_ABS="$(realpath "${MODEL_PATH}")"
   if [[ ! -f "${MODEL_ABS}" ]]; then
@@ -29,20 +42,14 @@ if [[ -n "${MODEL_PATH:-}" ]]; then
   # TensorRT writes <model>.cache next to the ONNX file, so mount the model
   # directory read-write rather than mounting the file read-only.
   MODEL_MOUNT=(-v "${MODEL_DIR}:/models:rw")
-  MODEL_ENV=(-e "POINTPILLARS_MODEL_PATH=/models/${MODEL_FILE}")
+  RUNTIME_ENV+=(-e "POINTPILLARS_MODEL_PATH=/models/${MODEL_FILE}")
 fi
 
 docker run --rm -it \
   --gpus all \
   --network host \
   --ipc host \
-  -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID_VALUE}" \
-  -e CUDA_ARCH="${CUDA_ARCH_VALUE}" \
-  -e INPUT_TOPIC="${INPUT_TOPIC}" \
-  -e OUTPUT_TOPIC="${OUTPUT_TOPIC}" \
-  -e NVIDIA_VISIBLE_DEVICES=all \
-  -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-  "${MODEL_ENV[@]}" \
+  "${RUNTIME_ENV[@]}" \
   -v "${REPO_ROOT}:${PACKAGE_MOUNT}:rw" \
   -v "${BUILD_VOLUME}:${WORKSPACE}/build" \
   -v "${INSTALL_VOLUME}:${WORKSPACE}/install" \
