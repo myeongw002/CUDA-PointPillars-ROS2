@@ -4,6 +4,7 @@ set -euo pipefail
 IMAGE="${IMAGE:-cuda-pointpillars-ros2:humble-trt8.6}"
 ROS_DOMAIN_ID_VALUE="${ROS_DOMAIN_ID:-0}"
 CUDA_ARCH_VALUE="${CUDA_ARCH:-86}"
+FASTDDS_TRANSPORTS_VALUE="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -17,6 +18,7 @@ LOG_VOLUME="${LOG_VOLUME:-pointpillars_ros2_log}"
 RUNTIME_ENV=(
   -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID_VALUE}"
   -e CUDA_ARCH="${CUDA_ARCH_VALUE}"
+  -e FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_TRANSPORTS_VALUE}"
   -e NVIDIA_VISIBLE_DEVICES=all
   -e NVIDIA_DRIVER_CAPABILITIES=compute,utility
 )
