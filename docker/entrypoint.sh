@@ -2,6 +2,9 @@
 set -e
 
 source "/opt/ros/${ROS_DISTRO:-humble}/setup.bash"
-source /workspace/ros2_ws/install/setup.bash
+
+if [[ -f /workspace/ros2_ws/install/setup.bash ]]; then
+  source /workspace/ros2_ws/install/setup.bash
+fi
 
 exec "$@"
