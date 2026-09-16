@@ -17,3 +17,12 @@ pointpillars_node:
 
     initial_point_capacity: 250000
     class_names: [Car, Pedestrian, Cyclist]
+
+pointpillars_visualizer:
+  ros__parameters:
+    input_detections_topic: /pointpillars/detections
+    output_markers_topic: /pointpillars/markers
+    box_alpha: 0.25
+    text_scale: 0.6
+    marker_lifetime_sec: 0.5
+    show_labels: true
