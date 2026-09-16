@@ -18,6 +18,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
@@ -90,7 +91,25 @@ if(TENSORRT_PLUGIN_LIBRARY)
   target_link_libraries(pointpillars_node ${TENSORRT_PLUGIN_LIBRARY})
 endif()
 
-install(TARGETS pointpillars_node
+add_executable(pointpillars_visualizer
+  src/pointpillars_visualizer.cpp
+)
+
+target_compile_options(pointpillars_visualizer PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
+)
+
+ament_target_dependencies(pointpillars_visualizer
+  rclcpp
+  vision_msgs
+  visualization_msgs
+)
+
+install(TARGETS
+  pointpillars_node
+  pointpillars_visualizer
   DESTINATION lib/${PROJECT_NAME}
 )
 
