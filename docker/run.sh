@@ -24,8 +24,12 @@ if [[ -n "${MODEL_PATH:-}" ]]; then
     echo "MODEL_PATH does not exist: ${MODEL_ABS}" >&2
     exit 1
   fi
-  MODEL_MOUNT=(-v "${MODEL_ABS}:/models/pointpillar.onnx:ro")
-  MODEL_ENV=(-e POINTPILLARS_MODEL_PATH=/models/pointpillar.onnx)
+  MODEL_DIR="$(dirname "${MODEL_ABS}")"
+  MODEL_FILE="$(basename "${MODEL_ABS}")"
+  # TensorRT writes <model>.cache next to the ONNX file, so mount the model
+  # directory read-write rather than mounting the file read-only.
+  MODEL_MOUNT=(-v "${MODEL_DIR}:/models:rw")
+  MODEL_ENV=(-e "POINTPILLARS_MODEL_PATH=/models/${MODEL_FILE}")
 fi
 
 docker run --rm -it \
