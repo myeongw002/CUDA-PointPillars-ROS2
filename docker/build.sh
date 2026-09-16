@@ -10,6 +10,7 @@ else
   echo "warning: git-lfs is not installed; make sure model/pointpillar.onnx is not an LFS pointer" >&2
 fi
 
+echo "Building dependency image only; the ROS package source is bind-mounted at runtime."
 docker build \
   --progress=plain \
   --build-arg CUDA_ARCH="${CUDA_ARCH}" \
