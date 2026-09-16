@@ -39,6 +39,7 @@ RUN mkdir -p /usr/share/keyrings \
       ros-${ROS_DISTRO}-sensor-msgs \
       ros-${ROS_DISTRO}-vision-msgs \
       ros-${ROS_DISTRO}-geometry-msgs \
+      ros-${ROS_DISTRO}-visualization-msgs \
       python3-rosdep \
       python3-colcon-common-extensions \
  && rm -rf /var/lib/apt/lists/*
