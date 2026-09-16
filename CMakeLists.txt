@@ -1,121 +1,101 @@
-cmake_minimum_required(VERSION 3.8)
-project(cuda_pointpillars_ros)
+cmake_minimum_required(VERSION 3.18)
+project(cuda_pointpillars_ros LANGUAGES CXX CUDA)
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD 14)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  # RTX 30-series / Ampere default. Override with
+  # -DCMAKE_CUDA_ARCHITECTURES=<arch> when building for another GPU.
+  set(CMAKE_CUDA_ARCHITECTURES 86)
 endif()
 
-# find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(autoware_auto_perception_msgs REQUIRED)
-find_package(CUDA REQUIRED)
+find_package(vision_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 
-set(CMAKE_C_COMPILER /usr/bin/gcc)
-set(CMAKE_CXX_COMPILER /usr/bin/g++)
-set(CUDA_INSTALL_TARGET_DIR targets/x86_64-linux)
-set(CUDA_TOOLKIT_ROOT_DIR /usr/local/cuda)
-set(CUDA_INCLUDE_DIRS ${CUDA_TOOLKIT_ROOT_DIR}/${CUDA_INSTALL_TARGET_DIR}/include)
-
-set( SMS 30 32 35 37 50 52 53 60 61 62 70 72 75 87)
-foreach(sm ${SMS})
-	set(GENCODE ${GENCODE} -gencode arch=compute_${sm},code=sm_${sm})
-endforeach()
-set(HIGHEST_SM 87)
-set(GENCODE ${GENCODE} -gencode arch=compute_${HIGHEST_SM},code=compute_${HIGHEST_SM})
-
-set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
-    -ccbin ${CMAKE_CXX_COMPILER}
-    -Xcompiler -DWIN_INTERFACE_CUSTOM
-    -Xcompiler -I/usr/aarch64-linux-gnu/include/
-    -Xlinker -lsocket
-    -Xlinker -rpath=/usr/lib/aarch64-linux-gnu/
-    -Xlinker -rpath=/usr/aarch64-linux-gnu/lib/
-    -Xlinker -L/usr/lib/aarch64-linux-gnu/
-    -Xlinker -L/usr/aarch64-linux-gnu/lib/
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+  HINTS
+    /usr/include/x86_64-linux-gnu
+    /usr/include
+)
+find_library(TENSORRT_LIBRARY nvinfer
+  HINTS
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib
+)
+find_library(TENSORRT_ONNX_PARSER_LIBRARY nvonnxparser
+  HINTS
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib
+)
+find_library(TENSORRT_PLUGIN_LIBRARY nvinfer_plugin
+  HINTS
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib
 )
 
-# set(TENSORRT_INCLUDE_DIRS /home/e404/TensorRT-8.4.3.1/include/)
-# set(TENSORRT_LIBRARY_DIRS /home/e404/TensorRT-8.4.3.1/lib)
-set(TENSORRT_INCLUDE_DIRS /usr/include/x86_64-linux-gnu/)
-set(TENSORRT_LIBRARY_DIRS /usr/lib/x86_64-linux-gnu/)
-
-
-set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS_RELEASE "-Wno-deprecated-declarations -O2")
-add_compile_options(-W)
-add_compile_options(-std=c++14)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
-
-# add_executable(pc_info src/pc_info.cpp)
-cuda_add_executable(pc_process src/pc_process.cpp src/cuda_pp_ros.cpp
-src/cuda_pp_ros.cpp
-src/pillarScatter.cpp
-src/pointpillar.cpp
-src/postprocess.cpp
-src/preprocess.cpp
-
-src/postprocess_kernels.cu
-src/pillarScatterKernels.cu
-src/preprocess_kernels.cu
-)
-
-# target_include_directories(pc_info PUBLIC
-#   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-#   $<INSTALL_INTERFACE:include>)
-target_include_directories(pc_process PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${CUDA_INCLUDE_DIRS}
-  ${TENSORRT_INCLUDE_DIRS}
-  )
-# target_include_directories(cuda_pp_ros PUBLIC
-#   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-#   $<INSTALL_INTERFACE:include>
-#   ${CUDA_INCLUDE_DIRS}
-#   ${TENSORRT_INCLUDE_DIRS})
-
-include_directories(
-  ${CUDA_INCLUDE_DIRS}
-  ${TENSORRT_INCLUDE_DIRS}
-  include
-)
-# target_compile_features(pc_info PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-target_compile_features(pc_process PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-
-# ament_target_dependencies(pc_info    rclcpp sensor_msgs autoware_auto_perception_msgs)
-ament_target_dependencies(pc_process rclcpp sensor_msgs autoware_auto_perception_msgs CUDA
-)
-# ament_target_dependencies(cuda_pp_ros 
-#   sensor_msgs 
-#   CUDA    
-# )
-
-target_link_libraries(pc_process
-    libnvinfer.so
-    libnvonnxparser.so
-)
-link_directories(
-	${TENSORRT_LIBRARY_DIRS}
-)
-
-# install(TARGETS pc_info
-#   DESTINATION lib/${PROJECT_NAME})
-install(TARGETS pc_process
-  DESTINATION lib/${PROJECT_NAME})
-
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # uncomment the line when a copyright and license is not present in all source files
-  #set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # uncomment the line when this package is not in a git repo
-  #set(ament_cmake_cpplint_FOUND TRUE)
-  ament_lint_auto_find_test_dependencies()
+if(NOT TENSORRT_INCLUDE_DIR OR NOT TENSORRT_LIBRARY OR NOT TENSORRT_ONNX_PARSER_LIBRARY)
+  message(FATAL_ERROR "TensorRT headers/libraries were not found")
 endif()
+
+add_executable(pointpillars_node
+  src/pc_process.cpp
+  src/pillarScatter.cpp
+  src/pointpillar.cpp
+  src/postprocess.cpp
+  src/preprocess.cpp
+  src/postprocess_kernels.cu
+  src/pillarScatterKernels.cu
+  src/preprocess_kernels.cu
+)
+
+set_target_properties(pointpillars_node PROPERTIES
+  CUDA_SEPARABLE_COMPILATION ON
+)
+
+target_include_directories(pointpillars_node PRIVATE
+  include
+  ${TENSORRT_INCLUDE_DIR}
+)
+
+target_compile_options(pointpillars_node PRIVATE
+  $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wno-deprecated-declarations>
+)
+
+ament_target_dependencies(pointpillars_node
+  ament_index_cpp
+  rclcpp
+  sensor_msgs
+  vision_msgs
+  geometry_msgs
+)
+
+target_link_libraries(pointpillars_node
+  CUDA::cudart
+  ${TENSORRT_LIBRARY}
+  ${TENSORRT_ONNX_PARSER_LIBRARY}
+)
+
+if(TENSORRT_PLUGIN_LIBRARY)
+  target_link_libraries(pointpillars_node ${TENSORRT_PLUGIN_LIBRARY})
+endif()
+
+install(TARGETS pointpillars_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY
+  launch
+  config
+  model
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()

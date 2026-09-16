@@ -1,0 +1,18 @@
+pointpillars_node:
+  ros__parameters:
+    input_cloud_topic: /point_cloud
+    output_detections_topic: /pointpillars/detections
+
+    # Leave empty to use the model installed with this package.
+    model_path: ""
+
+    intensity_field: intensity
+    intensity_scale: 1.0
+    allow_missing_intensity: false
+
+    score_threshold: 0.1
+    nms_iou_threshold: 0.01
+    class_aware_nms: true
+
+    initial_point_capacity: 250000
+    class_names: [Car, Pedestrian, Cyclist]

@@ -1,90 +1,213 @@
-# Modified by cdefg
-THIS repository is not NVIDIA's original repository.
+# CUDA PointPillars ROS 2
 
-# Setup and Run
+ROS 2 Humble wrapper for NVIDIA CUDA-PointPillars / TensorRT inference.
 
-Prerequisites:
-ROS2(tested on galactic, Ubuntu 22.04LTS)  
-rclcpp  
-sensor_msgs  
-CUDA >= 11.3  
-TensorRT >= 8.4
+This fork is being adapted for streaming `sensor_msgs/msg/PointCloud2` input, persistent TensorRT inference, and object-level camera-LiDAR fusion experiments.
 
-To compile:  
-```
-colcon build
-```
+## Current interface
 
-# Essential Info to adapt to ROS2 system
+Input:
 
-## model IO
-Original repo uses data from .bin binary files. But to build a stream processing package, this package adapt loadData() function from main.cpp.
-The PointPillars model input takes serialized lidar data. the data is serialized point by point. The points are featured and the domains must be 'x', 'y', 'z', 'intensity'. As the PointPillars algorithm input only takes original $point$ infomation, the only thing we should do is to feed the PointCloud2 data (from ROS2) and size (row_step*height, stated from PointCloud2 msg in ros.org) into data C++ pointer. 
+- `sensor_msgs/msg/PointCloud2`
+- numeric `x`, `y`, `z` fields
+- an intensity field (`intensity` by default)
 
-## ament building system for CUDA
-Another tough thing to adapt to ROS2 is to build with CUDA, especially ROS2's ament system. 
-Yet finally I succeeded in editing CMakeLists.txt and build with colcon build command.
+Output:
 
-### for cuda
-```
-find_package(CUDA REQUIRED)
+- `vision_msgs/msg/Detection3DArray`
+- class ID and score
+- 3D box center, dimensions, and yaw
+
+Default topics:
+
+```text
+/point_cloud
+    ↓
+PointPillars
+    ↓
+/pointpillars/detections
 ```
 
-### Get right path for tensorrt
+The input and output topic names are ROS parameters and can be changed without recompiling.
 
-```
-set(TENSORRT_INCLUDE_DIRS /usr/include/x86_64-linux-gnu/)
-set(TENSORRT_LIBRARY_DIRS /usr/lib/x86_64-linux-gnu/)
-```
+## Important model note
 
-### Link use `cuda_add_executable` or `cuda_add_library`
+The bundled model is managed by Git LFS. After cloning, run:
 
-```
-cuda_add_executable(pc_process src/pc_process.cpp src/cuda_pp_ros.cpp
-src/cuda_pp_ros.cpp
-src/pillarScatter.cpp
-src/pointpillar.cpp
-src/postprocess.cpp
-src/preprocess.cpp
-
-src/postprocess_kernels.cu
-src/pillarScatterKernels.cu
-src/preprocess_kernels.cu
-)
+```bash
+git lfs install
+git lfs pull
 ```
 
-# ORIGINAL Essentials Info from Nv's repo
-# PointPillars Inference with TensorRT
+If `model/pointpillar.onnx` is still an LFS pointer, the node will stop with an explicit error instead of passing the pointer file to TensorRT.
 
-Original Readme.md file can be found at
-https://github.com/NVIDIA-AI-IOT/CUDA-PointPillars  
-$Below$ $is$ $lite$ $version.$
+The values in `include/params.h` (point-cloud range, voxel size, anchors, class count, feature-map dimensions) must match the OpenPCDet model used to generate the ONNX file.
 
-This repository contains sources and model for [pointpillars](https://arxiv.org/abs/1812.05784) inference using TensorRT.
-The model is created with [OpenPCDet](https://github.com/open-mmlab/OpenPCDet) and modified with onnx_graphsurgeon.
+## Docker environment
 
-Overall inference has four phases:
+The provided Docker image uses NVIDIA TensorRT `23.08-py3` as its base and installs ROS 2 Humble inside the container. The base image provides Ubuntu 22.04, CUDA 12.2.x, and TensorRT 8.6.x.
 
-- Convert points cloud into 4-channle voxels
-- Extend 4-channel voxels to 10-channel voxel features
-- Run TensorRT engine to get 3D-detection raw data
-- Parse bounding box, class type and direction
+### Host requirements
 
-## Model && Data
+- Linux with an NVIDIA GPU
+- NVIDIA driver compatible with the container CUDA version
+- Docker
+- NVIDIA Container Toolkit
 
-The demo use the velodyne data from KITTI Dataset.
-The onnx file can be converted from [pre-trained model](https://drive.google.com/file/d/1wMxWTpU1qUoY3DsCH31WJmvJxcjFXKlm/view) with given script under "./tool".
+Verify GPU access first:
 
-### Prerequisites
+```bash
+docker run --rm --gpus all nvcr.io/nvidia/tensorrt:23.08-py3 nvidia-smi
+```
 
-To build the pointpillars inference, **TensorRT** with PillarScatter layer and **CUDA** are needed. PillarScatter layer plugin is already implemented as a plugin for TRT in the demo.
+### Build
 
-## Note
+For an RTX 30-series GPU (SM 8.6):
 
-- GenerateVoxels has random output since GPU processes all points simultaneously while points selection for a voxel is random.
-- The demo will cache the onnx file to improve performance. If a new onnx will be used, please remove the cache file in "./model".
-- MAX_VOXELS in params.h is used to allocate cache during inference. Decrease the value to save memory.
+```bash
+./docker/build.sh
+```
 
-## References
+Equivalent command:
 
-- [PointPillars: Fast Encoders for Object Detection from Point Clouds](https://arxiv.org/abs/1812.05784)
+```bash
+docker build \
+  --build-arg CUDA_ARCH=86 \
+  -t cuda-pointpillars-ros2:humble-trt8.6 \
+  .
+```
+
+To build for another GPU, override `CUDA_ARCH`.
+
+### Run
+
+The container uses host networking so ROS 2 DDS traffic can be shared with ROS 2 nodes running directly on the host.
+
+```bash
+INPUT_TOPIC=/point_cloud ./docker/run.sh
+```
+
+Example with another PointCloud2 topic:
+
+```bash
+INPUT_TOPIC=/my_point_cloud ./docker/run.sh
+```
+
+The output remains:
+
+```text
+/pointpillars/detections
+```
+
+To use a different ONNX model without rebuilding the image:
+
+```bash
+MODEL_PATH=/absolute/path/to/pointpillar.onnx \
+INPUT_TOPIC=/point_cloud \
+./docker/run.sh
+```
+
+The model directory is mounted writable because TensorRT stores its serialized engine cache next to the ONNX file as `<model>.cache`. Delete that cache after changing the ONNX model, TensorRT version, or GPU architecture.
+
+If the host uses a non-zero ROS domain ID:
+
+```bash
+ROS_DOMAIN_ID=10 ./docker/run.sh
+```
+
+## Native ROS 2 build
+
+A native build is also possible when CUDA and TensorRT are already installed on the host.
+
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/myeongw002/CUDA-PointPillars-ROS2.git
+cd CUDA-PointPillars-ROS2
+git lfs pull
+
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install \
+  --packages-select cuda_pointpillars_ros \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86
+source install/setup.bash
+```
+
+Run:
+
+```bash
+ros2 launch cuda_pointpillars_ros pointpillars.launch.py \
+  input_cloud_topic:=/point_cloud
+```
+
+## Parameters
+
+Default values are in `config/pointpillars.yaml`.
+
+```yaml
+input_cloud_topic: /point_cloud
+output_detections_topic: /pointpillars/detections
+model_path: ""
+intensity_field: intensity
+intensity_scale: 1.0
+allow_missing_intensity: false
+score_threshold: 0.1
+nms_iou_threshold: 0.01
+class_aware_nms: true
+initial_point_capacity: 250000
+class_names: [Car, Pedestrian, Cyclist]
+```
+
+`model_path: ""` selects the model installed with this package.
+
+`intensity_scale` should match the preprocessing used during model training. For example, set it to `255.0` only if the incoming intensity is in approximately `[0, 255]` while the training pipeline used normalized intensity.
+
+## Changes in this fork
+
+Compared with the original ROS 2 wrapper, this fork currently:
+
+- targets ROS 2 Humble / Ubuntu 22.04;
+- keeps the CUDA stream, TensorRT engine, and PointPillars buffers alive across frames instead of rebuilding them in every subscription callback;
+- parses `PointCloud2` by field metadata instead of assuming a fixed 16-byte XYZI memory layout;
+- handles organized clouds and row padding;
+- removes the hard-coded local model path;
+- uses ROS parameters for topics, model path, thresholds, intensity handling, and class names;
+- uses `rclcpp::SensorDataQoS()` for PointCloud2 subscription;
+- publishes `vision_msgs/msg/Detection3DArray`;
+- enables FP16 TensorRT engine building when the GPU supports fast FP16;
+- uses class-aware NMS by default;
+- guards zero-overlap cases in the rotated-box intersection code;
+- provides an RTX 30-series CUDA architecture default (`SM 86`) that can be overridden at build time;
+- provides a Docker environment that isolates ROS 2 / CUDA / TensorRT dependencies from the host system.
+
+## Camera-LiDAR fusion roadmap
+
+The current ROS output is post-NMS `Detection3DArray`, which is suitable for the first object-level fusion implementation:
+
+```text
+2D detector
+    +
+PointPillars Detection3DArray
+    ↓
+3D-box projection
+    ↓
+2D/3D association
+    ↓
+fused object
+```
+
+A later step can expose pre-NMS PointPillars candidates so the camera evidence can rescore candidates before final NMS, following a CLOCs-style late-fusion design.
+
+## Upstream
+
+This repository is based on:
+
+- NVIDIA-AI-IOT/CUDA-PointPillars
+- cdefg/CUDA-PointPillars-ROS2
+- OpenPCDet
+
+## License
+
+Apache-2.0. See `LICENSE` and `NOTICE`.

@@ -1,200 +1,185 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #include "pointpillar.h"
-#include <iostream>
+
+#include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <vector>
+
 #include <cuda_runtime.h>
 #include "NvInfer.h"
+#include "NvInferPlugin.h"
+#include "NvInferRuntime.h"
 #include "NvOnnxConfig.h"
 #include "NvOnnxParser.h"
-#include "NvInferRuntime.h"
 
-TRT::~TRT(void)
+TRT::~TRT()
 {
-  delete(context_);
-  delete(engine_);
+  delete context_;
+  delete engine_;
   checkCudaErrors(cudaEventDestroy(start_));
   checkCudaErrors(cudaEventDestroy(stop_));
-  return;
 }
 
-TRT::TRT(std::string modelFile, cudaStream_t stream):stream_(stream)
+TRT::TRT(std::string model_file, cudaStream_t stream)
+: stream_(stream)
 {
-  std::string modelCache = modelFile + ".cache";
-  std::fstream trtCache(modelCache, std::ifstream::in);
+  const std::string model_cache = model_file + ".cache";
   checkCudaErrors(cudaEventCreate(&start_));
   checkCudaErrors(cudaEventCreate(&stop_));
-  if (!trtCache.is_open())
-  {
-	  std::cout << "Building TRT engine."<<std::endl;
-    // define builder
-    auto builder = (nvinfer1::createInferBuilder(gLogger_));
 
-    // define network
-    const auto explicitBatch = 1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
-    auto network = (builder->createNetworkV2(explicitBatch));
+  initLibNvInferPlugins(&gLogger_, "");
 
-    // define onnxparser
-    auto parser = (nvonnxparser::createParser(*network, gLogger_));
-    if (!parser->parseFromFile(modelFile.data(), static_cast<int>(nvinfer1::ILogger::Severity::kWARNING)))
+  std::ifstream trt_cache(model_cache, std::ios::binary);
+  if (!trt_cache.is_open()) {
+    std::cout << "Building TensorRT engine from " << model_file << std::endl;
+
+    auto * builder = nvinfer1::createInferBuilder(gLogger_);
+    if (builder == nullptr) {
+      std::cerr << "Failed to create TensorRT builder" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+
+    const auto explicit_batch =
+      1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+    auto * network = builder->createNetworkV2(explicit_batch);
+    auto * parser = nvonnxparser::createParser(*network, gLogger_);
+
+    if (!parser->parseFromFile(
+        model_file.c_str(), static_cast<int>(nvinfer1::ILogger::Severity::kWARNING)))
     {
-        std::cerr << ": failed to parse onnx model file, please check the onnx version and trt support op!"
-                  << std::endl;
-        exit(-1);
+      std::cerr << "Failed to parse ONNX model: " << model_file << std::endl;
+      std::exit(EXIT_FAILURE);
     }
 
-    // define config
-    auto networkConfig = builder->createBuilderConfig();
-#if defined (__arm64__) || defined (__aarch64__) 
-    networkConfig->setFlag(nvinfer1::BuilderFlag::kFP16);
-    std::cout << "Enable fp16!" << std::endl;
-#endif
-    // set max batch size
-    builder->setMaxBatchSize(1);
-    // set max workspace
-    networkConfig->setMaxWorkspaceSize(size_t(1) << 30);
-
-    engine_ = (builder->buildEngineWithConfig(*network, *networkConfig));
-
-    if (engine_ == nullptr)
-    {
-      std::cerr << ": engine init null!" << std::endl;
-      exit(-1);
+    auto * network_config = builder->createBuilderConfig();
+    if (builder->platformHasFastFp16()) {
+      network_config->setFlag(nvinfer1::BuilderFlag::kFP16);
+      std::cout << "TensorRT FP16 enabled" << std::endl;
     }
+    network_config->setMemoryPoolLimit(
+      nvinfer1::MemoryPoolType::kWORKSPACE, static_cast<std::size_t>(1) << 30);
 
-    // serialize the engine, then close everything down
-    auto trtModelStream = (engine_->serialize());
-    std::fstream trtOut(modelCache, std::ifstream::out);
-    if (!trtOut.is_open())
-    {
-       std::cout << "Can't store trt cache.\n";
-       exit(-1);
-    }
-
-    trtOut.write((char*)trtModelStream->data(), trtModelStream->size());
-    trtOut.close();
-    trtModelStream->destroy();
-
-    networkConfig->destroy();
-    parser->destroy();
-    network->destroy();
-    builder->destroy();
-
-  } else {
-	  std::cout << "load TRT cache."<<std::endl;
-    char *data;
-    unsigned int length;
-
-    // get length of file:
-    trtCache.seekg(0, trtCache.end);
-    length = trtCache.tellg();
-    trtCache.seekg(0, trtCache.beg);
-
-    data = (char *)malloc(length);
-    if (data == NULL ) {
-       std::cout << "Can't malloc data.\n";
-       exit(-1);
-    }
-
-    trtCache.read(data, length);
-    // create context
-    auto runtime = nvinfer1::createInferRuntime(gLogger_);
-
-    if (runtime == nullptr) {	  std::cout << "load TRT cache0."<<std::endl;
-        std::cerr << ": runtime null!" << std::endl;
-        exit(-1);
-    }
-    //plugin_ = nvonnxparser::createPluginFactory(gLogger_);
-    engine_ = (runtime->deserializeCudaEngine(data, length, 0));
+    engine_ = builder->buildEngineWithConfig(*network, *network_config);
     if (engine_ == nullptr) {
-        std::cerr << ": engine null!" << std::endl;
-        exit(-1);
+      std::cerr << "Failed to build TensorRT engine" << std::endl;
+      std::exit(EXIT_FAILURE);
     }
-    free(data);
-    trtCache.close();
+
+    auto * serialized_engine = engine_->serialize();
+    std::ofstream trt_out(model_cache, std::ios::binary);
+    if (!trt_out.is_open()) {
+      std::cerr << "Cannot write TensorRT cache: " << model_cache << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    trt_out.write(
+      reinterpret_cast<const char *>(serialized_engine->data()),
+      static_cast<std::streamsize>(serialized_engine->size()));
+    trt_out.close();
+
+    delete serialized_engine;
+    delete network_config;
+    delete parser;
+    delete network;
+    delete builder;
+  } else {
+    std::cout << "Loading TensorRT cache: " << model_cache << std::endl;
+    trt_cache.seekg(0, std::ios::end);
+    const std::streamsize length = trt_cache.tellg();
+    trt_cache.seekg(0, std::ios::beg);
+
+    std::vector<char> data(static_cast<std::size_t>(length));
+    if (!trt_cache.read(data.data(), length)) {
+      std::cerr << "Failed to read TensorRT cache: " << model_cache << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+
+    auto * runtime = nvinfer1::createInferRuntime(gLogger_);
+    if (runtime == nullptr) {
+      std::cerr << "Failed to create TensorRT runtime" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+
+    engine_ = runtime->deserializeCudaEngine(data.data(), static_cast<std::size_t>(length));
+    delete runtime;
+
+    if (engine_ == nullptr) {
+      std::cerr << "Failed to deserialize TensorRT cache. Delete " << model_cache
+                << " and rebuild it for the current TensorRT/GPU environment." << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
   }
 
   context_ = engine_->createExecutionContext();
-  return;
-}
-
-int TRT::doinfer(void**buffers)
-{
-  int status;
-
-  status = context_->enqueueV2(buffers, stream_, &start_);
-
-  if (!status)
-  {
-      return -1;
+  if (context_ == nullptr) {
+    std::cerr << "Failed to create TensorRT execution context" << std::endl;
+    std::exit(EXIT_FAILURE);
   }
-
-  return 0;
 }
 
-PointPillar::PointPillar(std::string modelFile, cudaStream_t stream):stream_(stream)
+int TRT::doinfer(void ** buffers)
+{
+  return context_->enqueueV2(buffers, stream_, &start_) ? 0 : -1;
+}
+
+PointPillar::PointPillar(std::string model_file, cudaStream_t stream)
+: stream_(stream)
 {
   checkCudaErrors(cudaEventCreate(&start_));
   checkCudaErrors(cudaEventCreate(&stop_));
 
   pre_.reset(new PreProcessCuda(stream_));
-  trt_.reset(new TRT(modelFile, stream_));
+  trt_.reset(new TRT(model_file, stream_));
   post_.reset(new PostProcessCuda(stream_));
 
-  //point cloud to voxels
-  voxel_features_size_ = MAX_VOXELS * params_.max_num_points_per_pillar * 4 * sizeof(float);
+  voxel_features_size_ =
+    MAX_VOXELS * params_.max_num_points_per_pillar * 4 * sizeof(float);
   voxel_num_size_ = MAX_VOXELS * sizeof(unsigned int);
-  voxel_idxs_size_ = MAX_VOXELS* 4 * sizeof(unsigned int);
+  voxel_idxs_size_ = MAX_VOXELS * 4 * sizeof(unsigned int);
 
-  checkCudaErrors(cudaMallocManaged((void **)&voxel_features_, voxel_features_size_));
-  checkCudaErrors(cudaMallocManaged((void **)&voxel_num_, voxel_num_size_));
-  checkCudaErrors(cudaMallocManaged((void **)&voxel_idxs_, voxel_idxs_size_));
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&voxel_features_), voxel_features_size_));
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&voxel_num_), voxel_num_size_));
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&voxel_idxs_), voxel_idxs_size_));
 
   checkCudaErrors(cudaMemsetAsync(voxel_features_, 0, voxel_features_size_, stream_));
   checkCudaErrors(cudaMemsetAsync(voxel_num_, 0, voxel_num_size_, stream_));
   checkCudaErrors(cudaMemsetAsync(voxel_idxs_, 0, voxel_idxs_size_, stream_));
 
-  //TRT-input
-  features_input_size_ = MAX_VOXELS * params_.max_num_points_per_pillar * 10 * sizeof(float);
-  checkCudaErrors(cudaMallocManaged((void **)&features_input_, features_input_size_));
-  checkCudaErrors(cudaMallocManaged((void **)&params_input_, sizeof(unsigned int)));
-
+  features_input_size_ =
+    MAX_VOXELS * params_.max_num_points_per_pillar * 10 * sizeof(float);
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&features_input_), features_input_size_));
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&params_input_), sizeof(unsigned int)));
   checkCudaErrors(cudaMemsetAsync(features_input_, 0, features_input_size_, stream_));
   checkCudaErrors(cudaMemsetAsync(params_input_, 0, sizeof(unsigned int), stream_));
 
-  //output of TRT -- input of post-process
-  cls_size_ = params_.feature_x_size * params_.feature_y_size * params_.num_classes * params_.num_anchors * sizeof(float);
-  box_size_ = params_.feature_x_size * params_.feature_y_size * params_.num_box_values * params_.num_anchors * sizeof(float);
-  dir_cls_size_ = params_.feature_x_size * params_.feature_y_size * params_.num_dir_bins * params_.num_anchors * sizeof(float);
-  checkCudaErrors(cudaMallocManaged((void **)&cls_output_, cls_size_));
-  checkCudaErrors(cudaMallocManaged((void **)&box_output_, box_size_));
-  checkCudaErrors(cudaMallocManaged((void **)&dir_cls_output_, dir_cls_size_));
+  cls_size_ =
+    params_.feature_x_size * params_.feature_y_size * params_.num_classes *
+    params_.num_anchors * sizeof(float);
+  box_size_ =
+    params_.feature_x_size * params_.feature_y_size * params_.num_box_values *
+    params_.num_anchors * sizeof(float);
+  dir_cls_size_ =
+    params_.feature_x_size * params_.feature_y_size * params_.num_dir_bins *
+    params_.num_anchors * sizeof(float);
 
-  //output of post-process
-  bndbox_size_ = (params_.feature_x_size * params_.feature_y_size * params_.num_anchors * 9 + 1) * sizeof(float);
-  checkCudaErrors(cudaMallocManaged((void **)&bndbox_output_, bndbox_size_));
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&cls_output_), cls_size_));
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&box_output_), box_size_));
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&dir_cls_output_), dir_cls_size_));
 
-  res_.reserve(100);
-  return;
+  bndbox_size_ =
+    (params_.feature_x_size * params_.feature_y_size * params_.num_anchors * 9 + 1) *
+    sizeof(float);
+  checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&bndbox_output_), bndbox_size_));
+
+  res_.reserve(256);
+  checkCudaErrors(cudaStreamSynchronize(stream_));
 }
 
-PointPillar::~PointPillar(void)
+PointPillar::~PointPillar()
 {
   pre_.reset();
   trt_.reset();
@@ -203,110 +188,94 @@ PointPillar::~PointPillar(void)
   checkCudaErrors(cudaFree(voxel_features_));
   checkCudaErrors(cudaFree(voxel_num_));
   checkCudaErrors(cudaFree(voxel_idxs_));
-
   checkCudaErrors(cudaFree(features_input_));
   checkCudaErrors(cudaFree(params_input_));
-
   checkCudaErrors(cudaFree(cls_output_));
   checkCudaErrors(cudaFree(box_output_));
   checkCudaErrors(cudaFree(dir_cls_output_));
-
   checkCudaErrors(cudaFree(bndbox_output_));
-
   checkCudaErrors(cudaEventDestroy(start_));
   checkCudaErrors(cudaEventDestroy(stop_));
-  return;
 }
 
-int PointPillar::doinfer(void*points_data, unsigned int points_size, std::vector<Bndbox> &nms_pred)
+int PointPillar::doinfer(
+  void * points_data,
+  unsigned int points_size,
+  std::vector<Bndbox> & nms_pred,
+  const float score_threshold,
+  const float nms_iou_threshold,
+  const bool class_aware_nms)
 {
+  nms_pred.clear();
+  res_.clear();
+
 #if PERFORMANCE_LOG
-  float generateVoxelsTime = 0.0f;
+  float generate_voxels_time = 0.0f;
   checkCudaErrors(cudaEventRecord(start_, stream_));
 #endif
 
-  pre_->generateVoxels((float*)points_data, points_size,
-        params_input_,
-        voxel_features_, 
-        voxel_num_,
-        voxel_idxs_);
-
-#if PERFORMANCE_LOG
-  checkCudaErrors(cudaEventRecord(stop_, stream_));
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaEventElapsedTime(&generateVoxelsTime, start_, stop_));
-  unsigned int params_input_cpu;
-  checkCudaErrors(cudaMemcpy(&params_input_cpu, params_input_, sizeof(unsigned int), cudaMemcpyDefault));
-  std::cout<<"find pillar_num: "<< params_input_cpu <<std::endl;
-#endif
-
-#if PERFORMANCE_LOG
-  float generateFeaturesTime = 0.0f;
-  checkCudaErrors(cudaEventRecord(start_, stream_));
-#endif
-
-  pre_->generateFeatures(voxel_features_,
-      voxel_num_,
-      voxel_idxs_,
-      params_input_,
-      features_input_);
+  pre_->generateVoxels(
+    static_cast<float *>(points_data), points_size,
+    params_input_, voxel_features_, voxel_num_, voxel_idxs_);
 
 #if PERFORMANCE_LOG
   checkCudaErrors(cudaEventRecord(stop_, stream_));
   checkCudaErrors(cudaEventSynchronize(stop_));
-  checkCudaErrors(cudaEventElapsedTime(&generateFeaturesTime, start_, stop_));
+  checkCudaErrors(cudaEventElapsedTime(&generate_voxels_time, start_, stop_));
 #endif
 
 #if PERFORMANCE_LOG
-  float doinferTime = 0.0f;
+  float generate_features_time = 0.0f;
   checkCudaErrors(cudaEventRecord(start_, stream_));
 #endif
 
-  void *buffers[] = {features_input_, voxel_idxs_, params_input_, cls_output_, box_output_, dir_cls_output_};
-  trt_->doinfer(buffers);
+  pre_->generateFeatures(
+    voxel_features_, voxel_num_, voxel_idxs_, params_input_, features_input_);
+
+#if PERFORMANCE_LOG
+  checkCudaErrors(cudaEventRecord(stop_, stream_));
+  checkCudaErrors(cudaEventSynchronize(stop_));
+  checkCudaErrors(cudaEventElapsedTime(&generate_features_time, start_, stop_));
+#endif
+
+#if PERFORMANCE_LOG
+  float inference_time = 0.0f;
+  checkCudaErrors(cudaEventRecord(start_, stream_));
+#endif
+
+  void * buffers[] = {
+    features_input_, voxel_idxs_, params_input_, cls_output_, box_output_, dir_cls_output_};
+  if (trt_->doinfer(buffers) != 0) {
+    return -1;
+  }
   checkCudaErrors(cudaMemsetAsync(params_input_, 0, sizeof(unsigned int), stream_));
 
 #if PERFORMANCE_LOG
   checkCudaErrors(cudaEventRecord(stop_, stream_));
   checkCudaErrors(cudaEventSynchronize(stop_));
-  checkCudaErrors(cudaEventElapsedTime(&doinferTime, start_, stop_));
+  checkCudaErrors(cudaEventElapsedTime(&inference_time, start_, stop_));
 #endif
 
-#if PERFORMANCE_LOG
-  float doPostprocessCudaTime = 0.0f;
-  checkCudaErrors(cudaEventRecord(start_, stream_));
-#endif
+  post_->doPostprocessCuda(
+    cls_output_, box_output_, dir_cls_output_, bndbox_output_, score_threshold);
+  checkCudaErrors(cudaStreamSynchronize(stream_));
 
-  post_->doPostprocessCuda(cls_output_, box_output_, dir_cls_output_,
-                          bndbox_output_);
-  checkCudaErrors(cudaDeviceSynchronize());
-  float obj_count = bndbox_output_[0];
-
-  int num_obj = static_cast<int>(obj_count);
-  auto output = bndbox_output_ + 1;
-
-  for (int i = 0; i < num_obj; i++) {
-    auto Bb = Bndbox(output[i * 9],
-                    output[i * 9 + 1], output[i * 9 + 2], output[i * 9 + 3],
-                    output[i * 9 + 4], output[i * 9 + 5], output[i * 9 + 6],
-                    static_cast<int>(output[i * 9 + 7]),
-                    output[i * 9 + 8]);
-    res_.push_back(Bb);
+  const int num_obj = static_cast<int>(bndbox_output_[0]);
+  const auto * output = bndbox_output_ + 1;
+  for (int i = 0; i < num_obj; ++i) {
+    res_.emplace_back(
+      output[i * 9],
+      output[i * 9 + 1], output[i * 9 + 2], output[i * 9 + 3],
+      output[i * 9 + 4], output[i * 9 + 5], output[i * 9 + 6],
+      static_cast<int>(output[i * 9 + 7]), output[i * 9 + 8]);
   }
 
-
-  nms_cpu(res_, params_.nms_thresh, nms_pred);
-  res_.clear();
+  nms_cpu(res_, nms_iou_threshold, nms_pred, class_aware_nms);
 
 #if PERFORMANCE_LOG
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaEventRecord(stop_, stream_));
-  checkCudaErrors(cudaEventSynchronize(stop_));
-  checkCudaErrors(cudaEventElapsedTime(&doPostprocessCudaTime, start_, stop_));
-  std::cout<<"TIME: generateVoxels: "<< generateVoxelsTime <<" ms." <<std::endl;
-  std::cout<<"TIME: generateFeatures: "<< generateFeaturesTime <<" ms." <<std::endl;
-  std::cout<<"TIME: doinfer: "<< doinferTime <<" ms." <<std::endl;
-  std::cout<<"TIME: doPostprocessCuda: "<< doPostprocessCudaTime <<" ms." <<std::endl;
+  std::cout << "TIME: generateVoxels: " << generate_voxels_time << " ms\n"
+            << "TIME: generateFeatures: " << generate_features_time << " ms\n"
+            << "TIME: inference: " << inference_time << " ms" << std::endl;
 #endif
   return 0;
 }
