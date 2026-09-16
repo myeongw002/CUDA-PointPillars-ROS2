@@ -10,11 +10,12 @@ WORKSPACE="/workspace/ros2_ws"
 source "/opt/ros/${ROS_DISTRO_VALUE}/setup.bash"
 cd "${WORKSPACE}"
 
-colcon build --symlink-install \
+# --log-base is a global colcon option, so it must appear before the `build`
+# subcommand. --build-base and --install-base are build-subcommand options.
+colcon --log-base "${WORKSPACE}/log" build --symlink-install \
   --packages-select cuda_pointpillars_ros \
   --build-base "${WORKSPACE}/build" \
   --install-base "${WORKSPACE}/install" \
-  --log-base "${WORKSPACE}/log" \
   --cmake-args \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH_VALUE}"
