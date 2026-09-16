@@ -5,6 +5,7 @@
 #ifndef POINTPILLAR_H_
 #define POINTPILLAR_H_
 
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
