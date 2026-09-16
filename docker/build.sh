@@ -11,6 +11,7 @@ else
 fi
 
 docker build \
+  --progress=plain \
   --build-arg CUDA_ARCH="${CUDA_ARCH}" \
   -t "${IMAGE}" \
   .
