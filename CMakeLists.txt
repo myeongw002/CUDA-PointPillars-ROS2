@@ -66,7 +66,10 @@ target_include_directories(pointpillars_node PRIVATE
 )
 
 target_compile_options(pointpillars_node PRIVATE
-  $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wno-deprecated-declarations>
+  $<$<COMPILE_LANGUAGE:CXX>:-Wall>
+  $<$<COMPILE_LANGUAGE:CXX>:-Wextra>
+  $<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>
+  $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>
 )
 
 ament_target_dependencies(pointpillars_node
