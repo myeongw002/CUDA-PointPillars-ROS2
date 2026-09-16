@@ -3,8 +3,6 @@ set -euo pipefail
 
 ROS_DISTRO_VALUE="${ROS_DISTRO:-humble}"
 CUDA_ARCH_VALUE="${CUDA_ARCH:-86}"
-INPUT_TOPIC_VALUE="${INPUT_TOPIC:-/point_cloud}"
-OUTPUT_TOPIC_VALUE="${OUTPUT_TOPIC:-/pointpillars/detections}"
 WORKSPACE="/workspace/ros2_ws"
 
 source "/opt/ros/${ROS_DISTRO_VALUE}/setup.bash"
@@ -21,11 +19,15 @@ colcon build --symlink-install \
 
 source "${WORKSPACE}/install/setup.bash"
 
-LAUNCH_ARGS=(
-  "input_cloud_topic:=${INPUT_TOPIC_VALUE}"
-  "output_detections_topic:=${OUTPUT_TOPIC_VALUE}"
-)
+LAUNCH_ARGS=()
 
+# Only override YAML values when the caller explicitly supplied an override.
+if [[ -n "${INPUT_TOPIC:-}" ]]; then
+  LAUNCH_ARGS+=("input_cloud_topic:=${INPUT_TOPIC}")
+fi
+if [[ -n "${OUTPUT_TOPIC:-}" ]]; then
+  LAUNCH_ARGS+=("output_detections_topic:=${OUTPUT_TOPIC}")
+fi
 if [[ -n "${POINTPILLARS_MODEL_PATH:-}" ]]; then
   LAUNCH_ARGS+=("model_path:=${POINTPILLARS_MODEL_PATH}")
 fi
