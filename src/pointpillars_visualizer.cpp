@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -79,13 +81,12 @@ private:
   void callback(const vision_msgs::msg::Detection3DArray::ConstSharedPtr msg)
   {
     visualization_msgs::msg::MarkerArray marker_array;
+    marker_array.markers.reserve(1 + msg->detections.size() * (show_labels_ ? 2 : 1));
 
     visualization_msgs::msg::Marker clear_marker;
     clear_marker.header = msg->header;
     clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
     marker_array.markers.push_back(clear_marker);
-
-    marker_array.markers.reserve(1 + msg->detections.size() * (show_labels_ ? 2 : 1));
 
     int marker_id = 0;
     for (const auto & detection : msg->detections) {
