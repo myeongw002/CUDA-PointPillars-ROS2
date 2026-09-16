@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 ROS_DISTRO_VALUE="${ROS_DISTRO:-humble}"
 CUDA_ARCH_VALUE="${CUDA_ARCH:-86}"
 WORKSPACE="/workspace/ros2_ws"
 
+# ROS 2 setup scripts are not guaranteed to be compatible with `set -u`
+# (nounset). Keep errexit/pipefail enabled, but do not enable nounset here.
 source "/opt/ros/${ROS_DISTRO_VALUE}/setup.bash"
 cd "${WORKSPACE}"
 
