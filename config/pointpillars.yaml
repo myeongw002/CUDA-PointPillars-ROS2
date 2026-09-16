@@ -1,6 +1,7 @@
 pointpillars_node:
   ros__parameters:
-    input_cloud_topic: /point_cloud
+    # Default COMPA pipeline input. Override at launch/runtime only when needed.
+    input_cloud_topic: /pc_interpoled
     output_detections_topic: /pointpillars/detections
 
     # Leave empty to use the model installed with this package.
