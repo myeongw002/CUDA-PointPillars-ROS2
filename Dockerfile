@@ -31,11 +31,13 @@ RUN apt-get update \
 # Pin TensorRT 10.8 built for CUDA 12.8. TensorRT 10.8 is the first release
 # with Blackwell support, and this branch intentionally stays on TensorRT 10.x.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends --allow-downgrades \
       libnvinfer10="${TENSORRT_VERSION}" \
       libnvinfer-dev="${TENSORRT_VERSION}" \
+      libnvinfer-headers-dev="${TENSORRT_VERSION}" \
       libnvinfer-plugin10="${TENSORRT_VERSION}" \
       libnvinfer-plugin-dev="${TENSORRT_VERSION}" \
+      libnvinfer-headers-plugin-dev="${TENSORRT_VERSION}" \
       libnvonnxparsers10="${TENSORRT_VERSION}" \
       libnvonnxparsers-dev="${TENSORRT_VERSION}" \
  && rm -rf /var/lib/apt/lists/*
