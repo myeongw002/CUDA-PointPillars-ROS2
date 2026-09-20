@@ -15,7 +15,6 @@
 #include "NvInferPlugin.h"
 #include "NvInferRuntime.h"
 #include "NvInferVersion.h"
-#include "NvOnnxConfig.h"
 #include "NvOnnxParser.h"
 
 #if NV_TENSORRT_MAJOR < 10 || NV_TENSORRT_MAJOR >= 11
