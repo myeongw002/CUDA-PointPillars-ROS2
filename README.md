@@ -4,6 +4,8 @@ ROS 2 Humble wrapper for NVIDIA CUDA-PointPillars / TensorRT inference.
 
 This fork is being adapted for streaming `sensor_msgs/msg/PointCloud2` input, persistent TensorRT inference, and object-level camera-LiDAR fusion experiments.
 
+> **Branch note:** `blackwell-tensorrt10` targets GeForce RTX 50-series / Blackwell GPUs with CUDA 12.8, TensorRT 10.8, and SM 120. The `main` branch remains the TensorRT 8.6 / SM 86 baseline.
+
 ## Current interface
 
 Input:
@@ -45,7 +47,7 @@ The values in `include/params.h` (point-cloud range, voxel size, anchors, class 
 
 ## Docker environment
 
-The Docker image contains only the runtime/build dependencies: Ubuntu 22.04, CUDA/TensorRT from `nvcr.io/nvidia/tensorrt:23.08-py3`, and ROS 2 Humble.
+The Docker image contains Ubuntu 22.04, CUDA 12.8.1, TensorRT 10.8.0.43, and ROS 2 Humble. TensorRT is pinned to the CUDA 12.8 Debian build so this branch does not silently upgrade to TensorRT 11.
 
 The repository source is **not copied into the image**. At runtime the host checkout is bind-mounted into:
 
@@ -73,12 +75,12 @@ This lets the same source tree be edited on the host without sharing host/contai
 Verify GPU access first:
 
 ```bash
-docker run --rm --gpus all nvcr.io/nvidia/tensorrt:23.08-py3 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
 ```
 
 ### Build the dependency image
 
-For an RTX 30-series GPU (SM 8.6):
+For an RTX 5070 / Blackwell GPU (SM 12.0):
 
 ```bash
 ./docker/build.sh
@@ -138,7 +140,7 @@ INPUT_TOPIC=/pc_interpoled \
 ./docker/run.sh
 ```
 
-The custom model directory is mounted read-write because TensorRT stores its serialized engine cache next to the model as `<model>.cache`.
+The custom model directory is mounted read-write because TensorRT stores its serialized engine cache next to the model. Cache names include the TensorRT version and GPU architecture, for example `pointpillar.onnx.trt10.8.0.sm120.cache`, so an old TensorRT 8 / Ampere engine is not reused accidentally.
 
 ### Interactive development shell
 
@@ -155,7 +157,7 @@ cd /workspace/ros2_ws
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install \
   --packages-select cuda_pointpillars_ros \
-  --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=120
 source install/setup.bash
 ```
 
@@ -185,7 +187,7 @@ source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install \
   --packages-select cuda_pointpillars_ros \
-  --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=120
 source install/setup.bash
 ```
 
@@ -233,7 +235,10 @@ Compared with the original ROS 2 wrapper, this fork currently:
 - enables FP16 TensorRT engine building when the GPU supports fast FP16;
 - uses class-aware NMS by default;
 - guards zero-overlap cases in the rotated-box intersection code;
-- provides an RTX 30-series CUDA architecture default (`SM 86`) that can be overridden at build time;
+- targets RTX 50-series / Blackwell by default (`SM 120`) while allowing the CUDA architecture to be overridden at build time;
+- uses TensorRT 10 name-based tensor bindings with `setTensorAddress()` and `enqueueV3()`;
+- uses `buildSerializedNetwork()` for TensorRT 10 engine creation;
+- isolates TensorRT engine caches by TensorRT version and GPU compute capability;
 - provides a bind-mounted Docker development workflow that isolates ROS 2 / CUDA / TensorRT dependencies and colcon build artifacts from the host workspace.
 
 ## Camera-LiDAR fusion roadmap
