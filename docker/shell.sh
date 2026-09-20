@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${IMAGE:-cuda-pointpillars-ros2:humble-trt8.6}"
+IMAGE="${IMAGE:-cuda-pointpillars-ros2:humble-trt10.8-cuda12.8}"
 ROS_DOMAIN_ID_VALUE="${ROS_DOMAIN_ID:-0}"
-CUDA_ARCH_VALUE="${CUDA_ARCH:-86}"
+CUDA_ARCH_VALUE="${CUDA_ARCH:-120}"
 FASTDDS_TRANSPORTS_VALUE="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
