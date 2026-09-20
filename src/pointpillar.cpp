@@ -14,8 +14,13 @@
 #include "NvInfer.h"
 #include "NvInferPlugin.h"
 #include "NvInferRuntime.h"
+#include "NvInferVersion.h"
 #include "NvOnnxConfig.h"
 #include "NvOnnxParser.h"
+
+#if NV_TENSORRT_MAJOR < 10 || NV_TENSORRT_MAJOR >= 11
+#error "blackwell-tensorrt10 requires TensorRT 10.x"
+#endif
 
 TRT::~TRT()
 {
@@ -28,7 +33,19 @@ TRT::~TRT()
 TRT::TRT(std::string model_file, cudaStream_t stream)
 : stream_(stream)
 {
-  const std::string model_cache = model_file + ".cache";
+  int device = 0;
+  cudaDeviceProp device_properties{};
+  checkCudaErrors(cudaGetDevice(&device));
+  checkCudaErrors(cudaGetDeviceProperties(&device_properties, device));
+
+  const std::string model_cache =
+    model_file + ".trt" +
+    std::to_string(NV_TENSORRT_MAJOR) + "." +
+    std::to_string(NV_TENSORRT_MINOR) + "." +
+    std::to_string(NV_TENSORRT_PATCH) + ".sm" +
+    std::to_string(device_properties.major) +
+    std::to_string(device_properties.minor) + ".cache";
+
   checkCudaErrors(cudaEventCreate(&start_));
   checkCudaErrors(cudaEventCreate(&stop_));
 
@@ -44,9 +61,8 @@ TRT::TRT(std::string model_file, cudaStream_t stream)
       std::exit(EXIT_FAILURE);
     }
 
-    const auto explicit_batch =
-      1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
-    auto * network = builder->createNetworkV2(explicit_batch);
+    // TensorRT 10 removed implicit batch mode and kEXPLICIT_BATCH.
+    auto * network = builder->createNetworkV2(0U);
     auto * parser = nvonnxparser::createParser(*network, gLogger_);
 
     if (!parser->parseFromFile(
@@ -64,13 +80,12 @@ TRT::TRT(std::string model_file, cudaStream_t stream)
     network_config->setMemoryPoolLimit(
       nvinfer1::MemoryPoolType::kWORKSPACE, static_cast<std::size_t>(1) << 30);
 
-    engine_ = builder->buildEngineWithConfig(*network, *network_config);
-    if (engine_ == nullptr) {
-      std::cerr << "Failed to build TensorRT engine" << std::endl;
+    auto * serialized_engine = builder->buildSerializedNetwork(*network, *network_config);
+    if (serialized_engine == nullptr) {
+      std::cerr << "Failed to build serialized TensorRT engine" << std::endl;
       std::exit(EXIT_FAILURE);
     }
 
-    auto * serialized_engine = engine_->serialize();
     std::ofstream trt_out(model_cache, std::ios::binary);
     if (!trt_out.is_open()) {
       std::cerr << "Cannot write TensorRT cache: " << model_cache << std::endl;
@@ -81,11 +96,26 @@ TRT::TRT(std::string model_file, cudaStream_t stream)
       static_cast<std::streamsize>(serialized_engine->size()));
     trt_out.close();
 
+    auto * runtime = nvinfer1::createInferRuntime(gLogger_);
+    if (runtime == nullptr) {
+      std::cerr << "Failed to create TensorRT runtime" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+
+    engine_ = runtime->deserializeCudaEngine(
+      serialized_engine->data(), serialized_engine->size());
+
+    delete runtime;
     delete serialized_engine;
     delete network_config;
     delete parser;
     delete network;
     delete builder;
+
+    if (engine_ == nullptr) {
+      std::cerr << "Failed to deserialize newly built TensorRT engine" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
   } else {
     std::cout << "Loading TensorRT cache: " << model_cache << std::endl;
     trt_cache.seekg(0, std::ios::end);
@@ -123,7 +153,38 @@ TRT::TRT(std::string model_file, cudaStream_t stream)
 
 int TRT::doinfer(void ** buffers)
 {
-  return context_->enqueueV2(buffers, stream_, &start_) ? 0 : -1;
+  // The ONNX exported by NVIDIA CUDA-PointPillars uses these stable tensor names:
+  // inputs: voxels, voxel_idxs, voxel_num
+  // outputs: cls_preds, box_preds, dir_cls_preds
+  struct TensorBinding
+  {
+    const char * name;
+    void * address;
+  };
+
+  const TensorBinding tensor_bindings[] = {
+    {"voxels", buffers[0]},
+    {"voxel_idxs", buffers[1]},
+    {"voxel_num", buffers[2]},
+    {"cls_preds", buffers[3]},
+    {"box_preds", buffers[4]},
+    {"dir_cls_preds", buffers[5]},
+  };
+
+  for (const auto & binding : tensor_bindings) {
+    if (engine_->getTensorIOMode(binding.name) == nvinfer1::TensorIOMode::kNONE) {
+      std::cerr << "TensorRT engine is missing expected I/O tensor: "
+                << binding.name << std::endl;
+      return -1;
+    }
+    if (!context_->setTensorAddress(binding.name, binding.address)) {
+      std::cerr << "Failed to bind TensorRT I/O tensor: "
+                << binding.name << std::endl;
+      return -1;
+    }
+  }
+
+  return context_->enqueueV3(stream_) ? 0 : -1;
 }
 
 PointPillar::PointPillar(std::string model_file, cudaStream_t stream)
