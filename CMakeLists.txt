@@ -7,9 +7,9 @@ set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  # RTX 30-series / Ampere default. Override with
-  # -DCMAKE_CUDA_ARCHITECTURES=<arch> when building for another GPU.
-  set(CMAKE_CUDA_ARCHITECTURES 86)
+  # GeForce RTX 50-series / Blackwell default (compute capability 12.0).
+  # Override with -DCMAKE_CUDA_ARCHITECTURES=<arch> for another GPU.
+  set(CMAKE_CUDA_ARCHITECTURES 120)
 endif()
 
 find_package(ament_cmake REQUIRED)
