@@ -1,18 +1,20 @@
-FROM nvcr.io/nvidia/tensorrt:23.08-py3
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
 
 ARG ROS_DISTRO=humble
-ARG CUDA_ARCH=86
+ARG CUDA_ARCH=120
+ARG TENSORRT_VERSION=10.8.0.43-1+cuda12.8
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=${ROS_DISTRO}
 ENV CUDA_ARCH=${CUDA_ARCH}
+ENV TENSORRT_VERSION=${TENSORRT_VERSION}
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
 SHELL ["/bin/bash", "-c"]
 
-# Install Ubuntu-native bootstrap packages first. ROS development packages are
-# installed after the ROS 2 repository is registered below.
+# Bootstrap packages. The CUDA base image already configures NVIDIA's CUDA
+# network repository, which also exposes TensorRT Debian packages.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -24,6 +26,18 @@ RUN apt-get update \
       git-lfs \
  && add-apt-repository universe -y \
  && locale-gen en_US.UTF-8 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Pin TensorRT 10.8 built for CUDA 12.8. TensorRT 10.8 is the first release
+# with Blackwell support, and this branch intentionally stays on TensorRT 10.x.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libnvinfer10="${TENSORRT_VERSION}" \
+      libnvinfer-dev="${TENSORRT_VERSION}" \
+      libnvinfer-plugin10="${TENSORRT_VERSION}" \
+      libnvinfer-plugin-dev="${TENSORRT_VERSION}" \
+      libnvonnxparsers10="${TENSORRT_VERSION}" \
+      libnvonnxparsers-dev="${TENSORRT_VERSION}" \
  && rm -rf /var/lib/apt/lists/*
 
 # Register ROS 2 Humble packages for Ubuntu 22.04 (Jammy).
@@ -44,9 +58,6 @@ RUN mkdir -p /usr/share/keyrings \
       python3-colcon-common-extensions \
  && rm -rf /var/lib/apt/lists/*
 
-# The repository itself is intentionally NOT copied into the image. At run
-# time docker/run.sh bind-mounts the host checkout into src/, while build,
-# install and log are kept in Docker named volumes.
 WORKDIR /workspace/ros2_ws
 
 COPY docker/entrypoint.sh /pointpillars_entrypoint.sh
