@@ -2,7 +2,7 @@
 set -eo pipefail
 
 ROS_DISTRO_VALUE="${ROS_DISTRO:-humble}"
-CUDA_ARCH_VALUE="${CUDA_ARCH:-86}"
+CUDA_ARCH_VALUE="${CUDA_ARCH:-120}"
 WORKSPACE="/workspace/ros2_ws"
 
 # ROS 2 setup scripts are not guaranteed to be compatible with `set -u`
